@@ -1,0 +1,26 @@
+-- ============================================================================  
+-- MASTER INSTALL SCRIPT: Enterprise POS & ERP Suite - Phase 1 DDL  
+-- HOW TO RUN: sqlplus pos_owner/pwd@tns @POS_ERP_INSTALL.sql  
+-- ============================================================================  
+WHENEVER SQLERROR CONTINUE;  
+SET ECHO ON;  
+SET DEFINE OFF;  
+SPOOL POS_INSTALL_LOG.txt;  
+PROMPT Step 1: Multi-Org Hierarchy...  
+@@ddl/01_multi_org_setup.sql  
+PROMPT Step 2: Item Master...  
+@@ddl/02_item_master.sql  
+PROMPT Step 3: Pricing and Promotions...  
+@@ddl/03_pricing_and_promotions.sql  
+PROMPT Step 4: Orders and Payments...  
+@@ddl/04_orders_and_payments.sql  
+PROMPT Step 5: Inventory Transactions...  
+@@ddl/05_inventory_transactions.sql  
+PROMPT Step 6: GL, AR, AP Financials...  
+@@ddl/06_financials_gl_ar_ap.sql  
+PROMPT Step 7: Tax Engine...  
+@@ddl/07_tax_engine.sql  
+PROMPT Step 8: Offline Sync and Audit...  
+@@ddl/08_offline_sync_and_audit.sql  
+COMMIT;  
+SPOOL OFF;  
