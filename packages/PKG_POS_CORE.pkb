@@ -147,23 +147,23 @@ CREATE OR REPLACE PACKAGE BODY PKG_POS_CORE AS
     END IF;
 
     -- Sequence and Order No
-    -- Assume sequence exists: pos_orders_seq
-    -- SELECT pos_orders_seq.NEXTVAL INTO p_order_id FROM DUAL; 
-    -- Faking sequence for compile without real DB
-    p_order_id := 1000 + DBMS_RANDOM.VALUE(1,1000000); 
+    p_order_id := pos_orders_seq.NEXTVAL;
     p_order_no := GENERATE_ORDER_NO(p_inv_org_id);
-
-    INSERT INTO POS_ORDERS (
-      ORDER_ID, ORDER_NO, INV_ORG_ID, TERMINAL_ID, SHIFT_ID, CASHIER_USER_ID, 
-      CUSTOMER_ID, TABLE_ID, ORDER_TYPE, ORDER_STATUS, SECTOR_TYPE, 
-      ORDER_DATETIME, CURRENCY_CODE, PRICE_LIST_ID, CREATED_BY, CREATION_DATE,
-      SUBTOTAL, DISCOUNT_AMOUNT, TAX_AMOUNT, ROUNDING_AMOUNT, TOTAL_AMOUNT, PAID_AMOUNT
-    ) VALUES (
-      p_order_id, p_order_no, p_inv_org_id, p_terminal_id, p_shift_id, p_cashier_user_id,
-      p_customer_id, p_table_id, p_order_type, 'DRAFT', p_sector_type, 
-      SYSDATE, p_currency_code, v_price_list_id, get_current_user_id(), SYSDATE,
-      0, 0, 0, 0, 0, 0
-    );
+    DECLARE
+      v_user_id NUMBER := get_current_user_id();
+    BEGIN
+      INSERT INTO POS_ORDERS (
+        ORDER_ID, ORDER_NO, INV_ORG_ID, TERMINAL_ID, SHIFT_ID, CASHIER_USER_ID, 
+        CUSTOMER_ID, TABLE_ID, ORDER_TYPE, ORDER_STATUS, SECTOR_TYPE, 
+        ORDER_DATETIME, CURRENCY_CODE, PRICE_LIST_ID, CREATED_BY, CREATION_DATE,
+        SUBTOTAL, DISCOUNT_AMOUNT, TAX_AMOUNT, ROUNDING_AMOUNT, TOTAL_AMOUNT, PAID_AMOUNT
+      ) VALUES (
+        p_order_id, p_order_no, p_inv_org_id, p_terminal_id, p_shift_id, p_cashier_user_id,
+        p_customer_id, p_table_id, p_order_type, 'DRAFT', p_sector_type, 
+        SYSDATE, p_currency_code, v_price_list_id, v_user_id, SYSDATE,
+        0, 0, 0, 0, 0, 0
+      );
+    END;
 
     IF p_table_id IS NOT NULL THEN
       UPDATE POS_TABLES 
@@ -199,6 +199,7 @@ CREATE OR REPLACE PACKAGE BODY PKG_POS_CORE AS
     v_line_subtotal NUMBER;
     v_discount_amt NUMBER;
     v_cost NUMBER;
+    v_line_no NUMBER;
   BEGIN
     SAVEPOINT add_line_sp;
 
@@ -234,15 +235,16 @@ CREATE OR REPLACE PACKAGE BODY PKG_POS_CORE AS
     v_line_subtotal := p_quantity * v_actual_price;
     v_discount_amt := v_line_subtotal * (NVL(p_discount_pct, 0) / 100);
     v_cost := get_item_cost(p_item_id, p_variant_id, v_inv_org_id);
+    v_line_no := get_next_line_no(p_order_id);
 
-    p_line_id := 1000 + DBMS_RANDOM.VALUE(1,1000000); -- Fake sequence
+    p_line_id := pos_order_lines_seq.NEXTVAL;
 
     INSERT INTO POS_ORDER_LINES (
       ORDER_LINE_ID, ORDER_ID, LINE_NO, ITEM_ID, VARIANT_ID, UOM_CODE, QUANTITY,
       UNIT_PRICE, DISCOUNT_PERCENT, DISCOUNT_AMOUNT, LINE_SUBTOTAL, COST_PRICE,
       LINE_TYPE, LINE_STATUS, LINE_NOTES
     ) VALUES (
-      p_line_id, p_order_id, get_next_line_no(p_order_id), p_item_id, p_variant_id, v_actual_uom, p_quantity,
+      p_line_id, p_order_id, v_line_no, p_item_id, p_variant_id, v_actual_uom, p_quantity,
       v_actual_price, p_discount_pct, v_discount_amt, (v_line_subtotal - v_discount_amt), v_cost,
       'REGULAR', 'ACTIVE', p_line_notes
     );
@@ -465,7 +467,7 @@ CREATE OR REPLACE PACKAGE BODY PKG_POS_CORE AS
       v_change := 0;
     END IF;
 
-    p_payment_id := 2000 + DBMS_RANDOM.VALUE(1,1000000);
+    p_payment_id := pos_order_payments_seq.NEXTVAL;
 
     INSERT INTO POS_ORDER_PAYMENTS (
       PAYMENT_ID, ORDER_ID, PAYMENT_METHOD_ID, AMOUNT_TENDERED, AMOUNT_APPLIED,

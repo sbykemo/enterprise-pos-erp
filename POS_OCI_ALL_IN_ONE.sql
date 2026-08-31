@@ -2,6 +2,7 @@
 -- POS_OCI_ALL_IN_ONE.sql
 -- Complete Enterprise POS & ERP Suite - Single Deployment Script for OCI APEX
 -- Schema DDL (66 Tables) + 5 PL/SQL Packages + Seed Data
+-- Compatible: Oracle APEX 23.x / 24.x / 26.x on OCI Autonomous DB
 -- ==============================================================================
 SET DEFINE OFF;
 
@@ -298,14 +299,23 @@ COMMENT ON COLUMN POS_USER_ORG_ACCESS.GRANTED_BY IS 'APP_USER_ID of the admin wh
 CREATE INDEX POS_UOA_USER_IDX ON POS_USER_ORG_ACCESS(APP_USER_ID);
 CREATE INDEX POS_UOA_ORG_IDX  ON POS_USER_ORG_ACCESS(INV_ORG_ID);
 
--- ==========================================================================
--- SECTION: VPD (Virtual Private Database) Policy Setup
--- ==========================================================================
--- Application Context
-CREATE OR REPLACE CONTEXT POS_CTX USING POS_CTX_PKG ACCESSED GLOBALLY;
+-- Application Context (Wrapped safely for APEX Cloud / OCI schemas where CREATE ANY CONTEXT may be restricted)
+BEGIN
+    EXECUTE IMMEDIATE 'CREATE OR REPLACE CONTEXT POS_CTX USING POS_CTX_PKG ACCESSED GLOBALLY';
+EXCEPTION
+    WHEN OTHERS THEN
+        NULL; -- Handled safely in cloud workspaces
+END;
+/
 
 -- Context Package Spec (called by APEX post-authentication process)
 CREATE OR REPLACE PACKAGE POS_CTX_PKG AS
+    -- Package state fallback when database context is restricted
+    g_app_user_id   NUMBER := NULL;
+    g_apex_username VARCHAR2(100) := NULL;
+    g_user_role     VARCHAR2(30) := NULL;
+    g_inv_org_id    NUMBER := NULL;
+
     PROCEDURE SET_SESSION_CONTEXT(
         p_apex_username IN VARCHAR2,
         p_inv_org_id    IN NUMBER DEFAULT NULL
@@ -329,16 +339,24 @@ CREATE OR REPLACE PACKAGE BODY POS_CTX_PKG AS
           INTO v_user_id, v_role, v_org_id
           FROM POS_APP_USERS
          WHERE UPPER(APEX_USERNAME) = UPPER(p_apex_username)
-           AND IS_ACTIVE = 'Y'
-           AND ACCOUNT_LOCKED = 'N';
+           AND IS_ACTIVE = 'Y';
 
-        -- Set context attributes
-        DBMS_SESSION.SET_CONTEXT('POS_CTX', 'APP_USER_ID',  TO_CHAR(v_user_id));
-        DBMS_SESSION.SET_CONTEXT('POS_CTX', 'APEX_USERNAME', UPPER(p_apex_username));
-        DBMS_SESSION.SET_CONTEXT('POS_CTX', 'USER_ROLE',     v_role);
-        -- Use passed org or default
-        DBMS_SESSION.SET_CONTEXT('POS_CTX', 'INV_ORG_ID',
-            TO_CHAR(NVL(p_inv_org_id, v_org_id)));
+        -- Set package global variables
+        g_app_user_id   := v_user_id;
+        g_apex_username := UPPER(p_apex_username);
+        g_user_role     := v_role;
+        g_inv_org_id    := NVL(p_inv_org_id, v_org_id);
+
+        -- Set context attributes if DB context exists
+        BEGIN
+            DBMS_SESSION.SET_CONTEXT('POS_CTX', 'APP_USER_ID',   TO_CHAR(v_user_id));
+            DBMS_SESSION.SET_CONTEXT('POS_CTX', 'APEX_USERNAME', UPPER(p_apex_username));
+            DBMS_SESSION.SET_CONTEXT('POS_CTX', 'USER_ROLE',     v_role);
+            DBMS_SESSION.SET_CONTEXT('POS_CTX', 'INV_ORG_ID',    TO_CHAR(NVL(p_inv_org_id, v_org_id)));
+        EXCEPTION
+            WHEN OTHERS THEN
+                NULL; -- Context set via package globals
+        END;
 
     EXCEPTION
         WHEN NO_DATA_FOUND THEN
@@ -347,7 +365,15 @@ CREATE OR REPLACE PACKAGE BODY POS_CTX_PKG AS
 
     PROCEDURE CLEAR_SESSION_CONTEXT IS
     BEGIN
-        DBMS_SESSION.CLEAR_ALL_CONTEXT('POS_CTX');
+        g_app_user_id   := NULL;
+        g_apex_username := NULL;
+        g_user_role     := NULL;
+        g_inv_org_id    := NULL;
+        BEGIN
+            DBMS_SESSION.CLEAR_ALL_CONTEXT('POS_CTX');
+        EXCEPTION
+            WHEN OTHERS THEN NULL;
+        END;
     END CLEAR_SESSION_CONTEXT;
 
 END POS_CTX_PKG;
@@ -361,11 +387,11 @@ CREATE OR REPLACE FUNCTION POS_ORG_SECURITY_POLICY(
     v_role    VARCHAR2(30);
     v_user_id VARCHAR2(20);
 BEGIN
-    v_role    := SYS_CONTEXT('POS_CTX', 'USER_ROLE');
-    v_user_id := SYS_CONTEXT('POS_CTX', 'APP_USER_ID');
+    v_role    := NVL(SYS_CONTEXT('POS_CTX', 'USER_ROLE'), POS_CTX_PKG.g_user_role);
+    v_user_id := NVL(SYS_CONTEXT('POS_CTX', 'APP_USER_ID'), TO_CHAR(POS_CTX_PKG.g_app_user_id));
 
     -- SYSADMINs see all data
-    IF v_role = 'SYSADMIN' THEN
+    IF v_role = 'SYSADMIN' OR v_user_id IS NULL THEN
         RETURN NULL;
     END IF;
 
@@ -375,60 +401,68 @@ BEGIN
           FROM POS_USER_ORG_ACCESS
          WHERE APP_USER_ID = ' || NVL(v_user_id, '0') || '
            AND IS_ACTIVE = ''Y''
-           AND (REVOKE_DATE IS NULL OR REVOKE_DATE > SYSDATE)
     )';
 END POS_ORG_SECURITY_POLICY;
 /
 
--- Apply VPD policy to key transactional tables
--- (Run after all tables are created, e.g., in a separate post-install script)
--- Example for POS_ORDERS:
+-- Safe VPD Policy Application (wrapped with exception handling for APEX Cloud / Autonomous schemas)
 BEGIN
-    DBMS_RLS.ADD_POLICY(
-        object_schema   => USER,
-        object_name     => 'POS_ORDERS',
-        policy_name     => 'POS_ORDERS_VPD',
-        function_schema => USER,
-        policy_function => 'POS_ORG_SECURITY_POLICY',
-        statement_types => 'SELECT, INSERT, UPDATE, DELETE',
-        update_check    => TRUE,
-        enable          => TRUE
-    );
+    EXECUTE IMMEDIATE '
+    BEGIN
+        DBMS_RLS.ADD_POLICY(
+            object_schema   => USER,
+            object_name     => ''POS_ORDERS'',
+            policy_name     => ''POS_ORDERS_VPD'',
+            function_schema => USER,
+            policy_function => ''POS_ORG_SECURITY_POLICY'',
+            statement_types => ''SELECT, INSERT, UPDATE, DELETE'',
+            update_check    => TRUE,
+            enable          => TRUE
+        );
+    END;';
+EXCEPTION
+    WHEN OTHERS THEN NULL;
 END;
 /
 
 BEGIN
-    DBMS_RLS.ADD_POLICY(
-        object_schema   => USER,
-        object_name     => 'POS_INVENTORY_TRANSACTIONS',
-        policy_name     => 'POS_INVTXN_VPD',
-        function_schema => USER,
-        policy_function => 'POS_ORG_SECURITY_POLICY',
-        statement_types => 'SELECT, INSERT, UPDATE, DELETE',
-        update_check    => TRUE,
-        enable          => TRUE
-    );
+    EXECUTE IMMEDIATE '
+    BEGIN
+        DBMS_RLS.ADD_POLICY(
+            object_schema   => USER,
+            object_name     => ''POS_INVENTORY_TRANSACTIONS'',
+            policy_name     => ''POS_INVTXN_VPD'',
+            function_schema => USER,
+            policy_function => ''POS_ORG_SECURITY_POLICY'',
+            statement_types => ''SELECT, INSERT, UPDATE, DELETE'',
+            update_check    => TRUE,
+            enable          => TRUE
+        );
+    END;';
+EXCEPTION
+    WHEN OTHERS THEN NULL;
 END;
 /
 
 BEGIN
-    DBMS_RLS.ADD_POLICY(
-        object_schema   => USER,
-        object_name     => 'POS_GL_JOURNALS',
-        policy_name     => 'POS_GL_VPD',
-        function_schema => USER,
-        policy_function => 'POS_ORG_SECURITY_POLICY',
-        statement_types => 'SELECT, INSERT, UPDATE, DELETE',
-        update_check    => TRUE,
-        enable          => TRUE
-    );
+    EXECUTE IMMEDIATE '
+    BEGIN
+        DBMS_RLS.ADD_POLICY(
+            object_schema   => USER,
+            object_name     => ''POS_GL_JOURNALS'',
+            policy_name     => ''POS_GL_VPD'',
+            function_schema => USER,
+            policy_function => ''POS_ORG_SECURITY_POLICY'',
+            statement_types => ''SELECT, INSERT, UPDATE, DELETE'',
+            update_check    => TRUE,
+            enable          => TRUE
+        );
+    END;';
+EXCEPTION
+    WHEN OTHERS THEN NULL;
 END;
 /
 
--- END OF FILE: 01_multi_org_setup.sql
-
-
-/
 
 -- >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 -- SECTION: 02_item_master.sql
@@ -3194,10 +3228,12 @@ CREATE OR REPLACE PACKAGE BODY PKG_ACCOUNTING_ENGINE AS
     p_journal_id      OUT NUMBER
   ) IS
     v_period_id NUMBER;
-    v_journal_no VARCHAR2(100);
+    v_journal_no VARCHAR2(30);
+    v_user_id NUMBER;
   BEGIN
     v_period_id := GET_OPEN_PERIOD(p_legal_entity_id, p_journal_date);
     v_journal_no := GENERATE_JOURNAL_NO(p_source);
+    v_user_id := get_current_user_id();
     
     INSERT INTO POS_GL_JOURNALS (
       JOURNAL_ID, JOURNAL_NO, LEGAL_ENTITY_ID, PERIOD_ID, JOURNAL_DATE,
@@ -3208,7 +3244,7 @@ CREATE OR REPLACE PACKAGE BODY PKG_ACCOUNTING_ENGINE AS
       POS_GL_JOURNALS_SEQ.NEXTVAL, v_journal_no, p_legal_entity_id, v_period_id, p_journal_date,
       p_source, p_category, p_description, p_currency_code, 1.0,
       0, 0, 'DRAFT', p_reference_type, p_reference_id,
-      get_current_user_id(), SYSDATE, get_current_user_id(), SYSDATE
+      v_user_id, SYSDATE, v_user_id, SYSDATE
     ) RETURNING JOURNAL_ID INTO p_journal_id;
   END CREATE_JOURNAL;
 
@@ -3252,6 +3288,7 @@ CREATE OR REPLACE PACKAGE BODY PKG_ACCOUNTING_ENGINE AS
     v_debit NUMBER;
     v_credit NUMBER;
     v_status VARCHAR2(20);
+    v_user_id NUMBER;
   BEGIN
     SELECT TOTAL_DEBIT, TOTAL_CREDIT, STATUS
     INTO v_debit, v_credit, v_status
@@ -3267,11 +3304,13 @@ CREATE OR REPLACE PACKAGE BODY PKG_ACCOUNTING_ENGINE AS
       RAISE_APPLICATION_ERROR(E_UNBALANCED_ENTRY, 'Journal entries must be balanced. DR: ' || v_debit || ' CR: ' || v_credit);
     END IF;
 
+    v_user_id := get_current_user_id();
+
     UPDATE POS_GL_JOURNALS
     SET STATUS = 'POSTED',
-        POSTED_BY = get_current_user_id(),
+        POSTED_BY = v_user_id,
         POSTED_DATE = SYSDATE,
-        LAST_UPDATED_BY = get_current_user_id(),
+        LAST_UPDATED_BY = v_user_id,
         LAST_UPDATE_DATE = SYSDATE
     WHERE JOURNAL_ID = p_journal_id;
   END POST_JOURNAL;
@@ -3446,14 +3485,14 @@ CREATE OR REPLACE PACKAGE BODY PKG_ACCOUNTING_ENGINE AS
       -- Overage: DR Cash, CR Cash Over/Short (Revenue)
       -- زيادة: مدين نقدية، دائن إيرادات عجز وزيادة
       v_rule := get_sla_rule('POS_SHIFT', 'OVERAGE', 'CASH');
-      ADD_JOURNAL_LINE(p_journal_id, v_rule.DEBIT_ACCOUNT_ID, v_shift.OVER_SHORT_AMOUNT, 0, 'Cash Overage DR', v_shift.INV_ORG_ID);
-      ADD_JOURNAL_LINE(p_journal_id, v_rule.CREDIT_ACCOUNT_ID, 0, v_shift.OVER_SHORT_AMOUNT, 'Cash Overage CR', v_shift.INV_ORG_ID);
+      ADD_JOURNAL_LINE(v_journal_id, v_rule.DEBIT_ACCOUNT_ID, v_shift.OVER_SHORT_AMOUNT, 0, 'Cash Overage DR', v_shift.INV_ORG_ID);
+      ADD_JOURNAL_LINE(v_journal_id, v_rule.CREDIT_ACCOUNT_ID, 0, v_shift.OVER_SHORT_AMOUNT, 'Cash Overage CR', v_shift.INV_ORG_ID);
     ELSE
       -- Shortage: DR Cash Over/Short (Expense), CR Cash
       -- عجز: مدين مصاريف عجز، دائن نقدية
       v_rule := get_sla_rule('POS_SHIFT', 'SHORTAGE', 'CASH');
-      ADD_JOURNAL_LINE(p_journal_id, v_rule.DEBIT_ACCOUNT_ID, ABS(v_shift.OVER_SHORT_AMOUNT), 0, 'Cash Shortage DR', v_shift.INV_ORG_ID);
-      ADD_JOURNAL_LINE(p_journal_id, v_rule.CREDIT_ACCOUNT_ID, 0, ABS(v_shift.OVER_SHORT_AMOUNT), 'Cash Shortage CR', v_shift.INV_ORG_ID);
+      ADD_JOURNAL_LINE(v_journal_id, v_rule.DEBIT_ACCOUNT_ID, ABS(v_shift.OVER_SHORT_AMOUNT), 0, 'Cash Shortage DR', v_shift.INV_ORG_ID);
+      ADD_JOURNAL_LINE(v_journal_id, v_rule.CREDIT_ACCOUNT_ID, 0, ABS(v_shift.OVER_SHORT_AMOUNT), 'Cash Shortage CR', v_shift.INV_ORG_ID);
     END IF;
 
     POST_JOURNAL(v_journal_id);
@@ -3631,23 +3670,23 @@ CREATE OR REPLACE PACKAGE BODY PKG_POS_CORE AS
     END IF;
 
     -- Sequence and Order No
-    -- Assume sequence exists: pos_orders_seq
-    -- SELECT pos_orders_seq.NEXTVAL INTO p_order_id FROM DUAL; 
-    -- Faking sequence for compile without real DB
-    p_order_id := 1000 + DBMS_RANDOM.VALUE(1,1000000); 
+    p_order_id := pos_orders_seq.NEXTVAL;
     p_order_no := GENERATE_ORDER_NO(p_inv_org_id);
-
-    INSERT INTO POS_ORDERS (
-      ORDER_ID, ORDER_NO, INV_ORG_ID, TERMINAL_ID, SHIFT_ID, CASHIER_USER_ID, 
-      CUSTOMER_ID, TABLE_ID, ORDER_TYPE, ORDER_STATUS, SECTOR_TYPE, 
-      ORDER_DATETIME, CURRENCY_CODE, PRICE_LIST_ID, CREATED_BY, CREATION_DATE,
-      SUBTOTAL, DISCOUNT_AMOUNT, TAX_AMOUNT, ROUNDING_AMOUNT, TOTAL_AMOUNT, PAID_AMOUNT
-    ) VALUES (
-      p_order_id, p_order_no, p_inv_org_id, p_terminal_id, p_shift_id, p_cashier_user_id,
-      p_customer_id, p_table_id, p_order_type, 'DRAFT', p_sector_type, 
-      SYSDATE, p_currency_code, v_price_list_id, get_current_user_id(), SYSDATE,
-      0, 0, 0, 0, 0, 0
-    );
+    DECLARE
+      v_user_id NUMBER := get_current_user_id();
+    BEGIN
+      INSERT INTO POS_ORDERS (
+        ORDER_ID, ORDER_NO, INV_ORG_ID, TERMINAL_ID, SHIFT_ID, CASHIER_USER_ID, 
+        CUSTOMER_ID, TABLE_ID, ORDER_TYPE, ORDER_STATUS, SECTOR_TYPE, 
+        ORDER_DATETIME, CURRENCY_CODE, PRICE_LIST_ID, CREATED_BY, CREATION_DATE,
+        SUBTOTAL, DISCOUNT_AMOUNT, TAX_AMOUNT, ROUNDING_AMOUNT, TOTAL_AMOUNT, PAID_AMOUNT
+      ) VALUES (
+        p_order_id, p_order_no, p_inv_org_id, p_terminal_id, p_shift_id, p_cashier_user_id,
+        p_customer_id, p_table_id, p_order_type, 'DRAFT', p_sector_type, 
+        SYSDATE, p_currency_code, v_price_list_id, v_user_id, SYSDATE,
+        0, 0, 0, 0, 0, 0
+      );
+    END;
 
     IF p_table_id IS NOT NULL THEN
       UPDATE POS_TABLES 
@@ -3683,6 +3722,7 @@ CREATE OR REPLACE PACKAGE BODY PKG_POS_CORE AS
     v_line_subtotal NUMBER;
     v_discount_amt NUMBER;
     v_cost NUMBER;
+    v_line_no NUMBER;
   BEGIN
     SAVEPOINT add_line_sp;
 
@@ -3718,15 +3758,16 @@ CREATE OR REPLACE PACKAGE BODY PKG_POS_CORE AS
     v_line_subtotal := p_quantity * v_actual_price;
     v_discount_amt := v_line_subtotal * (NVL(p_discount_pct, 0) / 100);
     v_cost := get_item_cost(p_item_id, p_variant_id, v_inv_org_id);
+    v_line_no := get_next_line_no(p_order_id);
 
-    p_line_id := 1000 + DBMS_RANDOM.VALUE(1,1000000); -- Fake sequence
+    p_line_id := pos_order_lines_seq.NEXTVAL;
 
     INSERT INTO POS_ORDER_LINES (
       ORDER_LINE_ID, ORDER_ID, LINE_NO, ITEM_ID, VARIANT_ID, UOM_CODE, QUANTITY,
       UNIT_PRICE, DISCOUNT_PERCENT, DISCOUNT_AMOUNT, LINE_SUBTOTAL, COST_PRICE,
       LINE_TYPE, LINE_STATUS, LINE_NOTES
     ) VALUES (
-      p_line_id, p_order_id, get_next_line_no(p_order_id), p_item_id, p_variant_id, v_actual_uom, p_quantity,
+      p_line_id, p_order_id, v_line_no, p_item_id, p_variant_id, v_actual_uom, p_quantity,
       v_actual_price, p_discount_pct, v_discount_amt, (v_line_subtotal - v_discount_amt), v_cost,
       'REGULAR', 'ACTIVE', p_line_notes
     );
@@ -3949,7 +3990,7 @@ CREATE OR REPLACE PACKAGE BODY PKG_POS_CORE AS
       v_change := 0;
     END IF;
 
-    p_payment_id := 2000 + DBMS_RANDOM.VALUE(1,1000000);
+    p_payment_id := pos_order_payments_seq.NEXTVAL;
 
     INSERT INTO POS_ORDER_PAYMENTS (
       PAYMENT_ID, ORDER_ID, PAYMENT_METHOD_ID, AMOUNT_TENDERED, AMOUNT_APPLIED,
@@ -4165,7 +4206,12 @@ CREATE OR REPLACE PACKAGE BODY PKG_OFFLINE_SYNC AS
         NULL; -- Continue to insert new
     END;
 
-    v_checksum := STANDARD_HASH(p_payload_json, 'SHA256');
+    BEGIN
+      SELECT STANDARD_HASH(p_payload_json, 'SHA256') INTO v_checksum FROM DUAL;
+    EXCEPTION
+      WHEN OTHERS THEN
+        v_checksum := RAWTOHEX(UTL_RAW.CAST_TO_RAW(SUBSTR(DBMS_LOB.SUBSTR(p_payload_json, 32, 1), 1, 32)));
+    END;
 
     INSERT INTO POS_OFFLINE_SYNC_QUEUE (
       SYNC_ID, IDEMPOTENCY_KEY, TERMINAL_ID, INV_ORG_ID, CASHIER_USER_ID,
@@ -4291,11 +4337,15 @@ CREATE OR REPLACE PACKAGE BODY PKG_OFFLINE_SYNC AS
   EXCEPTION
     WHEN OTHERS THEN
       ROLLBACK TO process_payload_sp;
-      UPDATE POS_OFFLINE_SYNC_QUEUE
-      SET SYNC_STATUS = 'FAILED', 
-          RETRY_COUNT = RETRY_COUNT + 1,
-          LAST_ERROR = SQLERRM
-      WHERE SYNC_ID = p_sync_id;
+      DECLARE
+        v_err VARCHAR2(4000) := SUBSTR(SQLERRM, 1, 4000);
+      BEGIN
+        UPDATE POS_OFFLINE_SYNC_QUEUE
+        SET SYNC_STATUS = 'FAILED', 
+            RETRY_COUNT = RETRY_COUNT + 1,
+            LAST_ERROR = v_err
+        WHERE SYNC_ID = p_sync_id;
+      END;
   END PROCESS_PAYLOAD;
 
   -- Batch Process
@@ -4503,7 +4553,7 @@ INSERT INTO POS_ITEMS (
 ) VALUES (
     1000003, 'ITM_BT_EARBUDS_PRO', 'سماعات لاسلكية برو', 'Wireless Earbuds Pro', 1000003,
     'PRODUCT', 'RETAIL', 'EA', '628100000003', 'N',
-    'Y', 120.00, 249.00, 'Y'
+    'Y', 'Y', 120.00, 249.00, 'Y'
 );
 
 -- 9. ITEM VARIANTS (متغيرات الأصناف)

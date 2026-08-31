@@ -1,4 +1,4 @@
-﻿-- ==============================================================================
+-- ==============================================================================
 -- 09_seed_data.sql
 -- Description: Realistic Seed Data for Enterprise POS & ERP on OCI APEX
 -- Compatible: Oracle 19c / 21c / 23c / Autonomous Database (OCI)
@@ -141,7 +141,7 @@ INSERT INTO POS_ITEMS (
 ) VALUES (
     1000003, 'ITM_BT_EARBUDS_PRO', 'سماعات لاسلكية برو', 'Wireless Earbuds Pro', 1000003,
     'PRODUCT', 'RETAIL', 'EA', '628100000003', 'N',
-    'Y', 120.00, 249.00, 'Y'
+    'Y', 'Y', 120.00, 249.00, 'Y'
 );
 
 -- 9. ITEM VARIANTS (متغيرات الأصناف)

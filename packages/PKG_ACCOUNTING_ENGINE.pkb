@@ -106,10 +106,12 @@ CREATE OR REPLACE PACKAGE BODY PKG_ACCOUNTING_ENGINE AS
     p_journal_id      OUT NUMBER
   ) IS
     v_period_id NUMBER;
-    v_journal_no VARCHAR2(100);
+    v_journal_no VARCHAR2(30);
+    v_user_id NUMBER;
   BEGIN
     v_period_id := GET_OPEN_PERIOD(p_legal_entity_id, p_journal_date);
     v_journal_no := GENERATE_JOURNAL_NO(p_source);
+    v_user_id := get_current_user_id();
     
     INSERT INTO POS_GL_JOURNALS (
       JOURNAL_ID, JOURNAL_NO, LEGAL_ENTITY_ID, PERIOD_ID, JOURNAL_DATE,
@@ -120,7 +122,7 @@ CREATE OR REPLACE PACKAGE BODY PKG_ACCOUNTING_ENGINE AS
       POS_GL_JOURNALS_SEQ.NEXTVAL, v_journal_no, p_legal_entity_id, v_period_id, p_journal_date,
       p_source, p_category, p_description, p_currency_code, 1.0,
       0, 0, 'DRAFT', p_reference_type, p_reference_id,
-      get_current_user_id(), SYSDATE, get_current_user_id(), SYSDATE
+      v_user_id, SYSDATE, v_user_id, SYSDATE
     ) RETURNING JOURNAL_ID INTO p_journal_id;
   END CREATE_JOURNAL;
 
@@ -164,6 +166,7 @@ CREATE OR REPLACE PACKAGE BODY PKG_ACCOUNTING_ENGINE AS
     v_debit NUMBER;
     v_credit NUMBER;
     v_status VARCHAR2(20);
+    v_user_id NUMBER;
   BEGIN
     SELECT TOTAL_DEBIT, TOTAL_CREDIT, STATUS
     INTO v_debit, v_credit, v_status
@@ -179,11 +182,13 @@ CREATE OR REPLACE PACKAGE BODY PKG_ACCOUNTING_ENGINE AS
       RAISE_APPLICATION_ERROR(E_UNBALANCED_ENTRY, 'Journal entries must be balanced. DR: ' || v_debit || ' CR: ' || v_credit);
     END IF;
 
+    v_user_id := get_current_user_id();
+
     UPDATE POS_GL_JOURNALS
     SET STATUS = 'POSTED',
-        POSTED_BY = get_current_user_id(),
+        POSTED_BY = v_user_id,
         POSTED_DATE = SYSDATE,
-        LAST_UPDATED_BY = get_current_user_id(),
+        LAST_UPDATED_BY = v_user_id,
         LAST_UPDATE_DATE = SYSDATE
     WHERE JOURNAL_ID = p_journal_id;
   END POST_JOURNAL;
@@ -358,14 +363,14 @@ CREATE OR REPLACE PACKAGE BODY PKG_ACCOUNTING_ENGINE AS
       -- Overage: DR Cash, CR Cash Over/Short (Revenue)
       -- زيادة: مدين نقدية، دائن إيرادات عجز وزيادة
       v_rule := get_sla_rule('POS_SHIFT', 'OVERAGE', 'CASH');
-      ADD_JOURNAL_LINE(p_journal_id, v_rule.DEBIT_ACCOUNT_ID, v_shift.OVER_SHORT_AMOUNT, 0, 'Cash Overage DR', v_shift.INV_ORG_ID);
-      ADD_JOURNAL_LINE(p_journal_id, v_rule.CREDIT_ACCOUNT_ID, 0, v_shift.OVER_SHORT_AMOUNT, 'Cash Overage CR', v_shift.INV_ORG_ID);
+      ADD_JOURNAL_LINE(v_journal_id, v_rule.DEBIT_ACCOUNT_ID, v_shift.OVER_SHORT_AMOUNT, 0, 'Cash Overage DR', v_shift.INV_ORG_ID);
+      ADD_JOURNAL_LINE(v_journal_id, v_rule.CREDIT_ACCOUNT_ID, 0, v_shift.OVER_SHORT_AMOUNT, 'Cash Overage CR', v_shift.INV_ORG_ID);
     ELSE
       -- Shortage: DR Cash Over/Short (Expense), CR Cash
       -- عجز: مدين مصاريف عجز، دائن نقدية
       v_rule := get_sla_rule('POS_SHIFT', 'SHORTAGE', 'CASH');
-      ADD_JOURNAL_LINE(p_journal_id, v_rule.DEBIT_ACCOUNT_ID, ABS(v_shift.OVER_SHORT_AMOUNT), 0, 'Cash Shortage DR', v_shift.INV_ORG_ID);
-      ADD_JOURNAL_LINE(p_journal_id, v_rule.CREDIT_ACCOUNT_ID, 0, ABS(v_shift.OVER_SHORT_AMOUNT), 'Cash Shortage CR', v_shift.INV_ORG_ID);
+      ADD_JOURNAL_LINE(v_journal_id, v_rule.DEBIT_ACCOUNT_ID, ABS(v_shift.OVER_SHORT_AMOUNT), 0, 'Cash Shortage DR', v_shift.INV_ORG_ID);
+      ADD_JOURNAL_LINE(v_journal_id, v_rule.CREDIT_ACCOUNT_ID, 0, ABS(v_shift.OVER_SHORT_AMOUNT), 'Cash Shortage CR', v_shift.INV_ORG_ID);
     END IF;
 
     POST_JOURNAL(v_journal_id);

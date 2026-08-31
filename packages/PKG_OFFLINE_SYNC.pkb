@@ -66,7 +66,12 @@ CREATE OR REPLACE PACKAGE BODY PKG_OFFLINE_SYNC AS
         NULL; -- Continue to insert new
     END;
 
-    v_checksum := STANDARD_HASH(p_payload_json, 'SHA256');
+    BEGIN
+      SELECT STANDARD_HASH(p_payload_json, 'SHA256') INTO v_checksum FROM DUAL;
+    EXCEPTION
+      WHEN OTHERS THEN
+        v_checksum := RAWTOHEX(UTL_RAW.CAST_TO_RAW(SUBSTR(DBMS_LOB.SUBSTR(p_payload_json, 32, 1), 1, 32)));
+    END;
 
     INSERT INTO POS_OFFLINE_SYNC_QUEUE (
       SYNC_ID, IDEMPOTENCY_KEY, TERMINAL_ID, INV_ORG_ID, CASHIER_USER_ID,
@@ -192,11 +197,15 @@ CREATE OR REPLACE PACKAGE BODY PKG_OFFLINE_SYNC AS
   EXCEPTION
     WHEN OTHERS THEN
       ROLLBACK TO process_payload_sp;
-      UPDATE POS_OFFLINE_SYNC_QUEUE
-      SET SYNC_STATUS = 'FAILED', 
-          RETRY_COUNT = RETRY_COUNT + 1,
-          LAST_ERROR = SQLERRM
-      WHERE SYNC_ID = p_sync_id;
+      DECLARE
+        v_err VARCHAR2(4000) := SUBSTR(SQLERRM, 1, 4000);
+      BEGIN
+        UPDATE POS_OFFLINE_SYNC_QUEUE
+        SET SYNC_STATUS = 'FAILED', 
+            RETRY_COUNT = RETRY_COUNT + 1,
+            LAST_ERROR = v_err
+        WHERE SYNC_ID = p_sync_id;
+      END;
   END PROCESS_PAYLOAD;
 
   -- Batch Process
