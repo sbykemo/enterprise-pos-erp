@@ -234,20 +234,25 @@ CREATE OR REPLACE PACKAGE BODY PKG_POS_CORE AS
     -- Calc
     v_line_subtotal := p_quantity * v_actual_price;
     v_discount_amt := v_line_subtotal * (NVL(p_discount_pct, 0) / 100);
-    v_cost := get_item_cost(p_item_id, p_variant_id, v_inv_org_id);
-    v_line_no := get_next_line_no(p_order_id);
+    DECLARE
+      v_line_tax NUMBER := ROUND((v_line_subtotal - v_discount_amt) * 0.15, 4);
+    BEGIN
+      v_cost := get_item_cost(p_item_id, p_variant_id, v_inv_org_id);
+      v_line_no := get_next_line_no(p_order_id);
 
-    p_line_id := pos_order_lines_seq.NEXTVAL;
+      p_line_id := pos_order_lines_seq.NEXTVAL;
 
-    INSERT INTO POS_ORDER_LINES (
-      ORDER_LINE_ID, ORDER_ID, LINE_NO, ITEM_ID, VARIANT_ID, UOM_CODE, QUANTITY,
-      UNIT_PRICE, DISCOUNT_PERCENT, DISCOUNT_AMOUNT, LINE_SUBTOTAL, COST_PRICE,
-      LINE_TYPE, LINE_STATUS, LINE_NOTES
-    ) VALUES (
-      p_line_id, p_order_id, v_line_no, p_item_id, p_variant_id, v_actual_uom, p_quantity,
-      v_actual_price, p_discount_pct, v_discount_amt, (v_line_subtotal - v_discount_amt), v_cost,
-      'REGULAR', 'ACTIVE', p_line_notes
-    );
+      INSERT INTO POS_ORDER_LINES (
+        ORDER_LINE_ID, ORDER_ID, LINE_NO, ITEM_ID, VARIANT_ID, UOM_CODE, QUANTITY,
+        UNIT_PRICE, DISCOUNT_PERCENT, DISCOUNT_AMOUNT, LINE_SUBTOTAL, TAX_RATE, TAX_AMOUNT, LINE_TOTAL, COST_PRICE,
+        LINE_TYPE, LINE_STATUS, LINE_NOTES
+      ) VALUES (
+        p_line_id, p_order_id, v_line_no, p_item_id, p_variant_id, v_actual_uom, p_quantity,
+        v_actual_price, p_discount_pct, v_discount_amt, (v_line_subtotal - v_discount_amt), 15.0000, v_line_tax,
+        ((v_line_subtotal - v_discount_amt) + v_line_tax), v_cost,
+        'REGULAR', 'ACTIVE', p_line_notes
+      );
+    END;
 
     CALCULATE_ORDER_TOTALS(p_order_id);
 
@@ -450,7 +455,7 @@ CREATE OR REPLACE PACKAGE BODY PKG_POS_CORE AS
     INTO v_status, v_total, v_paid
     FROM POS_ORDERS WHERE ORDER_ID = p_order_id FOR UPDATE NOWAIT;
 
-    IF v_status NOT IN ('DRAFT', 'CONFIRMED') THEN
+    IF v_status NOT IN ('DRAFT', 'CONFIRMED', 'PARTIALLY_PAID') THEN
       RAISE_APPLICATION_ERROR(-20401, 'Order not ready for payment.');
     END IF;
 
