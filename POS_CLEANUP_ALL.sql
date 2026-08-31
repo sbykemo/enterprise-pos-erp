@@ -20,7 +20,6 @@ BEGIN
     ) LOOP
         BEGIN
             EXECUTE IMMEDIATE 'DROP PACKAGE ' || r.OBJECT_NAME;
-            DBMS_OUTPUT.PUT_LINE('Dropped Package: ' || r.OBJECT_NAME);
         EXCEPTION
             WHEN OTHERS THEN NULL;
         END;
@@ -28,28 +27,7 @@ BEGIN
 END;
 /
 
--- 2. DROP ALL POLICIES & CONTEXTS
-BEGIN
-    FOR r IN (
-        SELECT OBJECT_NAME, POLICY_NAME 
-        FROM USER_POLICIES 
-        WHERE OBJECT_NAME LIKE 'POS_%'
-    ) LOOP
-        BEGIN
-            DBMS_RLS.DROP_POLICY(
-                object_schema => USER,
-                object_name   => r.OBJECT_NAME,
-                policy_name   => r.POLICY_NAME
-            );
-        EXCEPTION
-            WHEN OTHERS THEN NULL;
-        END;
-    END LOOP;
-EXCEPTION
-    WHEN OTHERS THEN NULL;
-END;
-/
-
+-- 2. DROP ALL FUNCTIONS & CONTEXTS
 BEGIN
     EXECUTE IMMEDIATE 'DROP FUNCTION POS_ORG_SECURITY_POLICY';
 EXCEPTION
@@ -73,7 +51,6 @@ BEGIN
     ) LOOP
         BEGIN
             EXECUTE IMMEDIATE 'DROP TABLE ' || r.TABLE_NAME || ' CASCADE CONSTRAINTS PURGE';
-            DBMS_OUTPUT.PUT_LINE('Dropped Table: ' || r.TABLE_NAME);
         EXCEPTION
             WHEN OTHERS THEN NULL;
         END;
@@ -90,7 +67,6 @@ BEGIN
     ) LOOP
         BEGIN
             EXECUTE IMMEDIATE 'DROP SEQUENCE ' || r.SEQUENCE_NAME;
-            DBMS_OUTPUT.PUT_LINE('Dropped Sequence: ' || r.SEQUENCE_NAME);
         EXCEPTION
             WHEN OTHERS THEN NULL;
         END;
