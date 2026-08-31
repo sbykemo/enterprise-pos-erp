@@ -4206,11 +4206,14 @@ CREATE OR REPLACE PACKAGE BODY PKG_OFFLINE_SYNC AS
         NULL; -- Continue to insert new
     END;
 
+    DECLARE
+      v_payload_sample VARCHAR2(4000);
     BEGIN
-      SELECT STANDARD_HASH(SUBSTR(p_payload_json, 1, 4000), 'SHA256') INTO v_checksum FROM DUAL;
+      v_payload_sample := SUBSTR(p_payload_json, 1, 4000);
+      SELECT STANDARD_HASH(v_payload_sample, 'SHA256') INTO v_checksum FROM DUAL;
     EXCEPTION
       WHEN OTHERS THEN
-        v_checksum := TO_CHAR(SYSTIMESTAMP, 'YYYYMMDDHH24MISSFF6');
+        v_checksum := TO_CHAR(SYSTIMESTAMP, 'YYYYMMDDHH24MISSFF6') || '_' || SUBSTR(p_idempotency_key, 1, 30);
     END;
 
     INSERT INTO POS_OFFLINE_SYNC_QUEUE (
