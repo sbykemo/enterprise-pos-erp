@@ -33,9 +33,10 @@ CREATE OR REPLACE PACKAGE BODY PKG_POS_CORE AS
   BEGIN
     SELECT ORDER_STATUS INTO v_status
     FROM POS_ORDERS
-    WHERE ORDER_ID = p_order_id;
+    WHERE ORDER_ID = p_order_id
+    FOR UPDATE;
     
-    IF v_status != 'DRAFT' THEN
+    IF v_status NOT IN ('DRAFT', 'PARTIALLY_PAID') THEN
       RAISE_APPLICATION_ERROR(E_ORDER_NOT_DRAFT, 'Order is not in DRAFT status.');
     END IF;
   EXCEPTION
