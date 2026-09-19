@@ -407,6 +407,7 @@ CREATE OR REPLACE PACKAGE BODY PKG_POS_CORE AS
     v_price NUMBER;
     v_curr_list NUMBER := p_price_list_id;
   BEGIN
+    -- 1. Try specified price list and its parent hierarchy
     WHILE v_curr_list IS NOT NULL LOOP
       BEGIN
         SELECT LIST_PRICE INTO v_price
@@ -418,7 +419,6 @@ CREATE OR REPLACE PACKAGE BODY PKG_POS_CORE AS
         RETURN v_price;
       EXCEPTION
         WHEN NO_DATA_FOUND THEN
-          -- Check parent
           BEGIN
             SELECT PARENT_PRICE_LIST_ID INTO v_curr_list
             FROM POS_PRICE_LISTS
@@ -430,7 +430,43 @@ CREATE OR REPLACE PACKAGE BODY PKG_POS_CORE AS
       END;
     END LOOP;
     
-    RAISE_APPLICATION_ERROR(-20301, 'Price not found for item.');
+    -- 2. Fallback: Search in any active STANDARD price list
+    BEGIN
+      SELECT pll.LIST_PRICE INTO v_price
+      FROM POS_PRICE_LIST_LINES pll
+      JOIN POS_PRICE_LISTS pl ON pl.PRICE_LIST_ID = pll.PRICE_LIST_ID
+      WHERE pll.ITEM_ID = p_item_id
+        AND (pll.VARIANT_ID = p_variant_id OR (pll.VARIANT_ID IS NULL AND p_variant_id IS NULL))
+        AND pl.IS_ACTIVE = 'Y'
+        AND ROWNUM = 1;
+      RETURN v_price;
+    EXCEPTION
+      WHEN NO_DATA_FOUND THEN
+        NULL;
+    END;
+
+    -- 3. Fallback: Search item variant cost/price or item base price
+    IF p_variant_id IS NOT NULL THEN
+      BEGIN
+        SELECT NVL(COST_PRICE, 0) INTO v_price
+        FROM POS_ITEM_VARIANTS
+        WHERE VARIANT_ID = p_variant_id;
+        IF v_price > 0 THEN RETURN v_price; END IF;
+      EXCEPTION
+        WHEN NO_DATA_FOUND THEN NULL;
+      END;
+    END IF;
+
+    -- 4. Final Fallback: Item master MIN_SALE_PRICE or COST_PRICE
+    BEGIN
+      SELECT NVL(MIN_SALE_PRICE, NVL(COST_PRICE, 10)) INTO v_price
+      FROM POS_ITEMS
+      WHERE ITEM_ID = p_item_id;
+      RETURN v_price;
+    EXCEPTION
+      WHEN NO_DATA_FOUND THEN
+        RAISE_APPLICATION_ERROR(-20301, 'Price not found for item.');
+    END;
   END GET_ITEM_PRICE;
 
   PROCEDURE ADD_PAYMENT(
@@ -613,6 +649,175 @@ CREATE OR REPLACE PACKAGE BODY PKG_POS_CORE AS
       ROLLBACK TO recall_sp;
       RAISE;
   END RECALL_ORDER;
+
+  -- ============================================================================
+  -- SHIFT MANAGEMENT IMPLEMENTATION
+  -- ============================================================================
+
+  PROCEDURE OPEN_SHIFT(
+    p_inv_org_id      IN  NUMBER,
+    p_terminal_id     IN  NUMBER,
+    p_cashier_user_id IN  NUMBER,
+    p_opening_float   IN  NUMBER DEFAULT 0,
+    p_shift_id        OUT NUMBER,
+    p_shift_no        OUT VARCHAR2
+  ) IS
+    v_shift_id NUMBER;
+    v_shift_no VARCHAR2(30);
+  BEGIN
+    SELECT NVL(MAX(SHIFT_ID), 1000000) + 1 INTO v_shift_id FROM POS_SHIFTS;
+    v_shift_no := 'SHF-' || TO_CHAR(SYSDATE, 'YYYYMMDD') || '-' || LPAD(v_shift_id - 1000000, 4, '0');
+
+    INSERT INTO POS_SHIFTS (
+      SHIFT_ID, SHIFT_NO, TERMINAL_ID, INV_ORG_ID, CASHIER_USER_ID,
+      SHIFT_STATUS, OPEN_DATETIME, OPENING_FLOAT, EXPECTED_CASH, DECLARED_CASH,
+      OVER_SHORT_AMOUNT, TOTAL_SALES, TOTAL_REFUNDS, TOTAL_VOIDS,
+      TOTAL_DISCOUNTS, TOTAL_TAX, TOTAL_CASH_IN, TOTAL_CASH_OUT,
+      Z_REPORT_PRINTED, CREATED_BY, CREATION_DATE, LAST_UPDATED_BY, LAST_UPDATE_DATE
+    ) VALUES (
+      v_shift_id, v_shift_no, p_terminal_id, p_inv_org_id, p_cashier_user_id,
+      'OPEN', SYSTIMESTAMP, NVL(p_opening_float, 0), NVL(p_opening_float, 0), 0,
+      0, 0, 0, 0,
+      0, 0, 0, 0,
+      'N', p_cashier_user_id, SYSDATE, p_cashier_user_id, SYSDATE
+    );
+
+    IF NVL(p_opening_float, 0) > 0 THEN
+      INSERT INTO POS_SHIFT_CASH_MOVEMENTS (
+        MOVEMENT_ID, SHIFT_ID, MOVEMENT_TYPE, AMOUNT,
+        REASON, MOVEMENT_DATETIME, AUTHORIZED_BY,
+        CREATED_BY, CREATION_DATE, LAST_UPDATED_BY, LAST_UPDATE_DATE
+      ) VALUES (
+        NVL((SELECT MAX(MOVEMENT_ID) FROM POS_SHIFT_CASH_MOVEMENTS), 1000000) + 1,
+        v_shift_id, 'OPENING_FLOAT', p_opening_float,
+        'عهدة بداية الوردية', SYSTIMESTAMP, p_cashier_user_id,
+        p_cashier_user_id, SYSDATE, p_cashier_user_id, SYSDATE
+      );
+    END IF;
+
+    COMMIT;
+    p_shift_id := v_shift_id;
+    p_shift_no := v_shift_no;
+  END OPEN_SHIFT;
+
+  PROCEDURE RECORD_CASH_MOVEMENT(
+    p_shift_id       IN  NUMBER,
+    p_movement_type  IN  VARCHAR2,
+    p_amount         IN  NUMBER,
+    p_reason         IN  VARCHAR2,
+    p_authorized_by  IN  NUMBER DEFAULT NULL,
+    p_movement_id    OUT NUMBER
+  ) IS
+    v_mov_id NUMBER;
+  BEGIN
+    validate_shift_open(p_shift_id);
+
+    SELECT NVL(MAX(MOVEMENT_ID), 1000000) + 1 INTO v_mov_id FROM POS_SHIFT_CASH_MOVEMENTS;
+
+    INSERT INTO POS_SHIFT_CASH_MOVEMENTS (
+      MOVEMENT_ID, SHIFT_ID, MOVEMENT_TYPE, AMOUNT,
+      REASON, MOVEMENT_DATETIME, AUTHORIZED_BY,
+      CREATED_BY, CREATION_DATE, LAST_UPDATED_BY, LAST_UPDATE_DATE
+    ) VALUES (
+      v_mov_id, p_shift_id, p_movement_type, p_amount,
+      p_reason, SYSTIMESTAMP, p_authorized_by,
+      NVL(p_authorized_by, 1), SYSDATE, NVL(p_authorized_by, 1), SYSDATE
+    );
+
+    IF p_movement_type = 'PAID_IN' THEN
+      UPDATE POS_SHIFTS 
+         SET TOTAL_CASH_IN = NVL(TOTAL_CASH_IN, 0) + p_amount,
+             LAST_UPDATE_DATE = SYSDATE
+       WHERE SHIFT_ID = p_shift_id;
+    ELSIF p_movement_type IN ('PAID_OUT', 'CASH_DROP') THEN
+      UPDATE POS_SHIFTS 
+         SET TOTAL_CASH_OUT = NVL(TOTAL_CASH_OUT, 0) + p_amount,
+             LAST_UPDATE_DATE = SYSDATE
+       WHERE SHIFT_ID = p_shift_id;
+    END IF;
+
+    COMMIT;
+    p_movement_id := v_mov_id;
+  END RECORD_CASH_MOVEMENT;
+
+  PROCEDURE CLOSE_SHIFT(
+    p_shift_id       IN  NUMBER,
+    p_declared_cash  IN  NUMBER,
+    p_close_notes    IN  VARCHAR2 DEFAULT NULL,
+    p_user_id        IN  NUMBER   DEFAULT NULL,
+    p_out_status     OUT VARCHAR2,
+    p_out_message    OUT VARCHAR2
+  ) IS
+    v_opening_float  NUMBER := 0;
+    v_cash_sales     NUMBER := 0;
+    v_cash_in        NUMBER := 0;
+    v_cash_out       NUMBER := 0;
+    v_expected_cash  NUMBER := 0;
+    v_over_short     NUMBER := 0;
+    v_shift_status   VARCHAR2(20);
+    v_shift_no       VARCHAR2(30);
+    v_uid            NUMBER;
+  BEGIN
+    v_uid := NVL(p_user_id, NVL(TO_NUMBER(V('AI_USER_ID')), 1));
+
+    SELECT SHIFT_STATUS, NVL(OPENING_FLOAT, 0), SHIFT_NO
+      INTO v_shift_status, v_opening_float, v_shift_no
+      FROM POS_SHIFTS
+     WHERE SHIFT_ID = p_shift_id;
+
+    IF v_shift_status != 'OPEN' THEN
+      p_out_status  := 'ERROR';
+      p_out_message := 'الوردية ليست مفتوحة حالياً ليتم إغلاقها!';
+      RETURN;
+    END IF;
+
+    -- حساب مبيعات النقدية فقط
+    SELECT NVL(SUM(p.AMOUNT_APPLIED), 0)
+      INTO v_cash_sales
+      FROM POS_ORDER_PAYMENTS p
+      JOIN POS_ORDERS o ON o.ORDER_ID = p.ORDER_ID
+      JOIN POS_PAYMENT_METHODS pm ON pm.PAYMENT_METHOD_ID = p.PAYMENT_METHOD_ID
+     WHERE o.SHIFT_ID = p_shift_id
+       AND o.ORDER_STATUS IN ('PAID', 'CONFIRMED')
+       AND pm.METHOD_TYPE = 'CASH';
+
+    -- حركات النقدية اليدوية
+    SELECT NVL(SUM(CASE WHEN MOVEMENT_TYPE = 'PAID_IN'  THEN AMOUNT ELSE 0 END), 0),
+           NVL(SUM(CASE WHEN MOVEMENT_TYPE = 'PAID_OUT' THEN AMOUNT ELSE 0 END), 0)
+      INTO v_cash_in, v_cash_out
+      FROM POS_SHIFT_CASH_MOVEMENTS
+     WHERE SHIFT_ID = p_shift_id;
+
+    -- المتوقع = بداية + مبيعات كاش + إيداعات - سحوبات
+    v_expected_cash := v_opening_float + v_cash_sales + v_cash_in - v_cash_out;
+    v_over_short    := NVL(p_declared_cash, 0) - v_expected_cash;
+
+    -- الإغلاق النهائي
+    UPDATE POS_SHIFTS
+       SET SHIFT_STATUS      = 'CLOSED',
+           CLOSE_DATETIME    = SYSTIMESTAMP,
+           TOTAL_CASH_IN     = v_cash_in,
+           TOTAL_CASH_OUT    = v_cash_out,
+           EXPECTED_CASH     = v_expected_cash,
+           DECLARED_CASH     = NVL(p_declared_cash, 0),
+           OVER_SHORT_AMOUNT = v_over_short,
+           CLOSE_NOTES       = p_close_notes,
+           LAST_UPDATED_BY   = v_uid,
+           LAST_UPDATE_DATE  = SYSDATE
+     WHERE SHIFT_ID = p_shift_id;
+
+    COMMIT;
+
+    p_out_status  := 'SUCCESS';
+    p_out_message := 'تم إغلاق الوردية (' || v_shift_no || ') بنجاح! المتوقع: ' || 
+                     TO_CHAR(v_expected_cash, 'FM999,990.00') || ' | المُسلَّمة: ' || 
+                     TO_CHAR(p_declared_cash, 'FM999,990.00');
+  EXCEPTION
+    WHEN OTHERS THEN
+      ROLLBACK;
+      p_out_status  := 'ERROR';
+      p_out_message := 'خطأ أثناء إغلاق الوردية: ' || SQLERRM;
+  END CLOSE_SHIFT;
 
 END PKG_POS_CORE;
 /

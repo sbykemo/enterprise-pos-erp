@@ -123,5 +123,39 @@ CREATE OR REPLACE PACKAGE PKG_POS_CORE AS
     p_new_shift_id IN NUMBER DEFAULT NULL
   );
 
+  -- ============================================================================
+  -- SHIFT MANAGEMENT
+  -- ============================================================================
+
+  -- Open a new shift for cashier
+  PROCEDURE OPEN_SHIFT(
+    p_inv_org_id      IN  NUMBER,
+    p_terminal_id     IN  NUMBER,
+    p_cashier_user_id IN  NUMBER,
+    p_opening_float   IN  NUMBER DEFAULT 0,
+    p_shift_id        OUT NUMBER,
+    p_shift_no        OUT VARCHAR2
+  );
+
+  -- Record cash movement (PAID_IN, PAID_OUT, CASH_DROP)
+  PROCEDURE RECORD_CASH_MOVEMENT(
+    p_shift_id       IN  NUMBER,
+    p_movement_type  IN  VARCHAR2, -- 'PAID_IN', 'PAID_OUT', 'CASH_DROP'
+    p_amount         IN  NUMBER,
+    p_reason         IN  VARCHAR2,
+    p_authorized_by  IN  NUMBER DEFAULT NULL,
+    p_movement_id    OUT NUMBER
+  );
+
+  -- Close shift and calculate cash variance (Over / Short)
+  PROCEDURE CLOSE_SHIFT(
+    p_shift_id       IN  NUMBER,
+    p_declared_cash  IN  NUMBER,
+    p_close_notes    IN  VARCHAR2 DEFAULT NULL,
+    p_user_id        IN  NUMBER   DEFAULT NULL,
+    p_out_status     OUT VARCHAR2,
+    p_out_message    OUT VARCHAR2
+  );
+
 END PKG_POS_CORE;
 /
