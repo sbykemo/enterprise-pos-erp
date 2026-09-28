@@ -157,5 +157,14 @@ CREATE OR REPLACE PACKAGE PKG_POS_CORE AS
     p_out_message    OUT VARCHAR2
   );
 
+  -- Reopen a closed/suspended shift (supervisor only, with mandatory reason)
+  PROCEDURE REOPEN_SHIFT(
+    p_shift_id       IN  NUMBER,
+    p_reopen_reason  IN  VARCHAR2,
+    p_supervisor_id  IN  NUMBER   DEFAULT NULL,
+    p_out_status     OUT VARCHAR2,
+    p_out_message    OUT VARCHAR2
+  );
+
 END PKG_POS_CORE;
 /
