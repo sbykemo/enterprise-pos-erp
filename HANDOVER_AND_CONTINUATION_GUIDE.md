@@ -1,4 +1,4 @@
-﻿# 🏢 Enterprise POS & ERP — دليل التسليم واستئناف العمل على أي جهاز آخر
+# 🏢 Enterprise POS & ERP — دليل التسليم واستئناف العمل على أي جهاز آخر
 ## Project Continuation & Handover Guide (Application 102)
 
 ---
@@ -51,6 +51,19 @@
 | **Page 240** | GL Journals & Financials | **100% مكتملة** | دليل الحسابات الشجري (COA)، قيود اليومية، شاشة بنود القيد، الترحيل المحاسبي (POST)، والقيود العكسية (REVERSE) مع Compound Triggers للتوازن. |
 | **Page 250** | Shift Audit & Z-Report | **100% مكتملة** | سجل مراجعة الورديات، تدقيق النقدية والعجز والزيادة، حركات النقدية التفصيلية، قسيمة Z-Report الحرارية مع CSS مخصص للطباعة فقط دون الصفحة، وخاصية إعادة فتح الوردية للمدير. |
 | **Core Security** | Multi-Tenancy Matrix | **100% مكتملة** | منظومة العزل الأمني التلقائي على مستوى الشركة (`POS_USER_PERMITTED_LE_V`) والفرع (`POS_USER_PERMITTED_ORG_V`)، ومصادقة مخصصة من جدول `POS_APP_USERS` عبر `POS_AUTH_PKG`. |
+| **Page 300** | Users & Access Control | **جاهزة للتطبيق في APEX** | موثقة بالكامل في `docs/page300_users_access_guide.md` (إدارة مستخدمي النظام والصلاحيات والفروع المقترنة). |
+| **Page 310** | Org Setup & Hierarchy | **جاهزة للتطبيق في APEX** | موثقة بالكامل في `docs/page310_org_setup_guide.md` (الكيانات القانونية، وحدات التشغيل، الفروع، والمخازن ونقاط البيع). |
+| **Page 320** | Customers (CRM) | **جاهزة للتطبيق في APEX** | موثقة بالكامل في `docs/page320_customers_guide.md` (بيانات العملاء والحدود الائتمانية والمديونيات). |
+| **Page 330** | Suppliers & Purchase Orders | **جاهزة للتطبيق في APEX** | موثقة بالكامل في `docs/page330_suppliers_guide.md` (إدارة الموردين وأوامر الشراء وبنودها). |
+| **Page 340** | Accounts Receivable (AR) | **جاهزة للتطبيق في APEX** | موثقة بالكامل في `docs/page340_ar_guide.md` (فواتير وسندات قبض وتطبيقات الذمم المدينة وتقارير الأعمار). |
+| **Page 350** | Accounts Payable (AP) | **جاهزة للتطبيق في APEX** | موثقة بالكامل في `docs/page350_ap_guide.md` (فواتير الموردين وسندات الصرف والمطابقة الثلاثية 3-Way Match). |
+| **Page 360** | Chart of Accounts & Periods | **جاهزة للتطبيق في APEX** | موثقة بالكامل في `docs/page360_coa_periods_guide.md` (شجرة دليل الحسابات وتصنيفات Segments والفترات المالية وإغلاقها). |
+| **Page 370** | SLA Accounting Rules | **جاهزة للتطبيق في APEX** | موثقة بالكامل في `docs/page370_sla_rules_guide.md` (قواعد الترحيل الآلي للقيود المحاسبية بحسب العمليات والمصادر). |
+| **Page 380** | Tax Engine Configuration | **جاهزة للتطبيق في APEX** | موثقة بالكامل في `docs/page380_tax_config_guide.md` (الأنظمة الضريبية والنسب وقواعد الاحتساب والإعفاءات). |
+| **Page 390** | Cycle Count & Physical Audit | **جاهزة للتطبيق في APEX** | موثقة بالكامل في `docs/page390_cycle_count_guide.md` (أوامر الجرد الفعلي ومطابقة الفروقات واحتسابها آلياً). |
+| **Page 400** | Loyalty Programs & Points | **جاهزة للتطبيق في APEX** | موثقة بالكامل في `docs/page400_loyalty_guide.md` (برامج الولاء وحسابات النقاط وحركات الاكتساب والاستبدال). |
+| **Page 410** | Promotions & Coupons Builder | **جاهزة للتطبيق في APEX** | موثقة بالكامل في `docs/page410_promotions_guide.md` (العروض الترويجية BXGY والخصومات والكوبونات). |
+| **Page 420 & 430** | System Settings & Audit Trail | **جاهزة للتطبيق في APEX** | موثقة بالكامل في `docs/page420_430_settings_audit_guide.md` (إعدادات النظام العامة وقوالب الطباعة وسجل التدقيق وطابور المزامنة). |
 
 ---
 

@@ -1,4 +1,4 @@
-﻿# 🛒 Enterprise POS & ERP System
+# 🛒 Enterprise POS & ERP System
 ### Production-Grade Enterprise Point of Sale & ERP Solution
 **Built on Oracle APEX 26.1 / Oracle Cloud Autonomous Database (OCI 19c/23ai)**
 
@@ -42,13 +42,24 @@ An enterprise-grade, multi-company, multi-branch POS and ERP system engineered w
 For complete setup instructions and developer handover guide to continue on any other workstation, refer to:
 - 📘 **[HANDOVER_AND_CONTINUATION_GUIDE.md](./HANDOVER_AND_CONTINUATION_GUIDE.md)**
 - 📁 **Detailed Guides in [`docs/`](./docs/)**:
-  - `page210_guide.md`
-  - `page220_guide.md`
-  - `page230_stock_receipt_complete.md`
-  - `page230_transfers_complete.md`
-  - `page240_detailed_guide.md`
-  - `pages_240_250_guide.md`
-  - `security_architecture.md`
+  - `page210_guide.md` (Item Master & Matrix Variants)
+  - `page220_guide.md` (Pricing & Promotions)
+  - `page230_stock_receipt_complete.md` & `page230_transfers_complete.md` (Inventory & Transfers)
+  - `page240_detailed_guide.md` & `pages_240_250_guide.md` (GL Journals & Shift Audit)
+  - `page300_users_access_guide.md` (Users & Security Access)
+  - `page310_org_setup_guide.md` (Multi-Org Hierarchy & Terminals)
+  - `page320_customers_guide.md` (Customers CRM & Credit Control)
+  - `page330_suppliers_guide.md` (Suppliers & Purchase Orders)
+  - `page340_ar_guide.md` (Accounts Receivable & Aging)
+  - `page350_ap_guide.md` (Accounts Payable & 3-Way Match)
+  - `page360_coa_periods_guide.md` (COA Tree, Segments & Fiscal Periods)
+  - `page370_sla_rules_guide.md` (Subledger Accounting Rules Engine)
+  - `page380_tax_config_guide.md` (Tax Regimes, Rates & Rules)
+  - `page390_cycle_count_guide.md` (Cycle Count & Variance Audit)
+  - `page400_loyalty_guide.md` (Loyalty Programs & Point Ledgers)
+  - `page410_promotions_guide.md` (Promotion Builder & Coupons)
+  - `page420_430_settings_audit_guide.md` (App Settings, ESC/POS Templates, Audit Log & Offline Sync)
+  - `security_architecture.md` (Multi-Tenancy Security Matrix)
 
 ---
 
